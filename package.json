@@ -1,0 +1,19 @@
+{
+  "name": "ai-math-tutor",
+  "version": "1.0.0",
+  "description": "AI math tutor that finds mistakes in reasoning, teaches by guiding questions and verifies understanding with follow-up problems.",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "dev": "node --watch --env-file-if-exists=.env src/server.js",
+    "test": "node --test test/*.test.js",
+    "scenario": "node --env-file-if-exists=.env scripts/scenario.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0"
+  }
+}

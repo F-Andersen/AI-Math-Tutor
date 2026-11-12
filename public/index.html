@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Algebra Tutor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap&subset=cyrillic,latin" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="masthead">
+    <div class="masthead__title">
+      <span class="doc-no">AT-01</span>
+      <h1>Algebra Tutor</h1>
+    </div>
+    <dl class="masthead__meta">
+      <div><dt>Model</dt><dd id="meta-model">—</dd></div>
+      <div><dt>AI link</dt><dd id="meta-ai" class="status">—</dd></div>
+      <div><dt>Student</dt><dd id="meta-student">—</dd></div>
+    </dl>
+  </header>
+
+  <section class="kpis" aria-label="Learning progress summary">
+    <div class="kpi"><span class="kpi__label">Exercises completed</span><span class="kpi__value" id="k-done">0</span></div>
+    <div class="kpi"><span class="kpi__label">Solved independently</span><span class="kpi__value" id="k-indep">0</span></div>
+    <div class="kpi"><span class="kpi__label">Mistakes found</span><span class="kpi__value" id="k-mist">0</span></div>
+    <div class="kpi"><span class="kpi__label">Fixed &amp; verified</span><span class="kpi__value" id="k-fixed">0</span></div>
+    <div class="kpi"><span class="kpi__label">Steps checked</span><span class="kpi__value" id="k-steps">0</span></div>
+  </section>
+
+  <main class="layout">
+    <div class="col col--left">
+      <section class="panel" aria-labelledby="h-ex">
+        <h2 id="h-ex"><span class="num">01</span>Exercise</h2>
+        <div class="exercise" id="exercise" aria-live="polite">
+          <p class="field-label">Active problem</p>
+          <p class="problem" id="ex-problem">No active exercise</p>
+          <p class="field-label" id="ex-source">—</p>
+          <p class="rationale" id="ex-rationale" hidden></p>
+        </div>
+        <table class="steps" aria-label="Student work, step by step">
+          <thead><tr><th scope="col">#</th><th scope="col">Line</th><th scope="col" class="r">Check</th></tr></thead>
+          <tbody id="steps"><tr class="empty"><td colspan="3">Steps appear here as the tutor verifies them.</td></tr></tbody>
+        </table>
+        <form class="new-problem" id="new-problem">
+          <label class="field-label" for="problem-input">New equation</label>
+          <div class="row">
+            <input id="problem-input" name="problem" autocomplete="off" spellcheck="false" placeholder="e.g. 5(x − 2) = 3x + 4">
+            <button type="submit" class="btn btn--secondary">Start</button>
+          </div>
+          <p class="form-error" id="problem-error" role="alert"></p>
+        </form>
+        <button type="button" class="btn btn--secondary btn--block" id="load-scenario">Load test scenario</button>
+      </section>
+
+      <section class="panel" aria-labelledby="h-trace">
+        <h2 id="h-trace"><span class="num">04</span>Tutor reasoning trace</h2>
+        <p class="hint">What the AI checked and recorded on the last turn. Not shown to students in production.</p>
+        <ol class="trace" id="trace"><li class="empty">No calls yet.</li></ol>
+      </section>
+    </div>
+
+    <section class="panel panel--chat" aria-labelledby="h-chat">
+      <h2 id="h-chat"><span class="num">02</span>Dialogue</h2>
+      <div class="chat" id="chat" role="log" aria-live="polite" aria-relevant="additions">
+        <div class="msg msg--system">
+          <span class="msg__who">Note</span>
+          <p>Start an exercise, then write your work one line at a time — for example <code>3x + 12 = 2x + 19</code>. The tutor checks every step and asks questions instead of giving the answer.</p>
+        </div>
+      </div>
+      <form class="composer" id="composer">
+        <label class="field-label" for="msg-input">Your step or question</label>
+        <textarea id="msg-input" rows="2" spellcheck="false" placeholder="Type a line of work, e.g. 3x + 4 = 2x + 19"></textarea>
+        <div class="composer__bar">
+          <span class="field-label" id="composer-status">Enter — send · Shift+Enter — new line</span>
+          <button type="submit" class="btn btn--primary" id="send">Send</button>
+        </div>
+      </form>
+    </section>
+
+    <div class="col col--right">
+      <section class="panel" aria-labelledby="h-skills">
+        <h2 id="h-skills"><span class="num">03</span>Skills</h2>
+        <table class="data">
+          <thead><tr><th scope="col">Skill</th><th scope="col" class="r">Ex.</th><th scope="col" class="r">Err.</th><th scope="col" class="r">Mastery</th></tr></thead>
+          <tbody id="skills"><tr class="empty"><td colspan="4">No data yet.</td></tr></tbody>
+        </table>
+      </section>
+      <section class="panel" aria-labelledby="h-mist">
+        <h2 id="h-mist"><span class="num">03.1</span>Mistake log</h2>
+        <ul class="mistakes" id="mistakes"><li class="empty">No mistakes logged.</li></ul>
+      </section>
+      <section class="panel" aria-labelledby="h-hist">
+        <h2 id="h-hist"><span class="num">03.2</span>Exercise history</h2>
+        <table class="data">
+          <thead><tr><th scope="col">Problem</th><th scope="col">Source</th><th scope="col" class="r">Result</th></tr></thead>
+          <tbody id="history"><tr class="empty"><td colspan="3">No exercises yet.</td></tr></tbody>
+        </table>
+        <button type="button" class="btn btn--ghost" id="reset">Reset progress</button>
+      </section>
+    </div>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
