@@ -16,13 +16,22 @@ try {
 }
 
 let writeTimer = null;
+function writeNow() {
+  writeTimer = null;
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(FILE + ".tmp", JSON.stringify(db, null, 2));
+  fs.renameSync(FILE + ".tmp", FILE);
+}
 function persist() {
   clearTimeout(writeTimer);
-  writeTimer = setTimeout(() => {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(FILE + ".tmp", JSON.stringify(db, null, 2));
-    fs.renameSync(FILE + ".tmp", FILE);
-  }, 100);
+  writeTimer = setTimeout(writeNow, 100);
+}
+/** Write pending changes synchronously (called on shutdown). */
+export function flush() {
+  if (writeTimer) {
+    clearTimeout(writeTimer);
+    writeNow();
+  }
 }
 
 export const newId = (prefix) => `${prefix}_${crypto.randomBytes(4).toString("hex")}`;
@@ -57,7 +66,26 @@ export function addMistakeToSkill(student, skill) {
   s.mistakes += 1;
 }
 
-/** Compact view for the UI. */
+/** Exercise as the browser may see it: never the solution or tutor-only notes. */
+export function publicExercise(e) {
+  if (!e) return null;
+  return {
+    id: e.id,
+    problem: e.problem,
+    skill: e.skill,
+    source: e.source,
+    status: e.status,
+    outcome: e.outcome,
+    steps: e.steps.map((s) => ({ line: s.line, equivalent: s.equivalent })),
+    practiceFor: e.targets_mistake_id,
+  };
+}
+
+function publicMistake(m) {
+  return { id: m.id, skill: m.skill, error_type: m.error_type, description: m.description, student_work: m.student_work, verified: m.verified };
+}
+
+/** Compact view for the UI (sanitised: no answers). */
 export function snapshot(student) {
   const done = student.exercises.filter((e) => e.status === "completed");
   return {
@@ -69,8 +97,8 @@ export function snapshot(student) {
       steps_checked: student.exercises.reduce((n, e) => n + e.steps.length, 0),
     },
     skills: student.skills,
-    mistakes: student.mistakes.slice(-12).reverse(),
-    exercises: student.exercises.slice(-12).reverse(),
+    mistakes: student.mistakes.slice(-12).reverse().map(publicMistake),
+    exercises: student.exercises.slice(-12).reverse().map(publicExercise),
   };
 }
 

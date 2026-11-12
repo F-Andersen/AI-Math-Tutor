@@ -13,7 +13,7 @@ const { getStudent, snapshot } = await import("../src/store.js");
 const { analyzeEquation } = await import("../src/math/engine.js");
 
 if (!aiConfigured()) {
-  console.error("Set ANTHROPIC_API_KEY (in .env or the environment) to run the live scenario.");
+  console.error("Set the ANTHROPIC_API_KEY environment variable in this terminal to run the live scenario (see README).");
   process.exit(1);
 }
 

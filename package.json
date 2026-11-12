@@ -8,10 +8,10 @@
     "node": ">=20.6"
   },
   "scripts": {
-    "start": "node --env-file-if-exists=.env src/server.js",
-    "dev": "node --watch --env-file-if-exists=.env src/server.js",
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
     "test": "node --test test/*.test.js",
-    "scenario": "node --env-file-if-exists=.env scripts/scenario.js"
+    "scenario": "node scripts/scenario.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0"

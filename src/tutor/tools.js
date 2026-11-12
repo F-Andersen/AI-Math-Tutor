@@ -186,8 +186,9 @@ export function runTool(name, input, { student, session }) {
           result: { completed: false, reason: "final_answer does not satisfy the equation", check },
           summary: `rejected: ${input.final_answer} is not a solution`,
         };
-      const outcome = ["independent", "with_guidance", "revealed"].includes(input.outcome) ? input.outcome : "with_guidance";
-      // A practice problem solved with zero logged mistakes counts as independent evidence.
+      let outcome = ["independent", "with_guidance", "revealed"].includes(input.outcome) ? input.outcome : "with_guidance";
+      // Progress must stay honest: an exercise with a logged mistake was not solved independently.
+      if (outcome === "independent" && ex.mistakes > 0) outcome = "with_guidance";
       ex.status = "completed";
       ex.outcome = outcome;
       ex.completedAt = new Date().toISOString();
@@ -200,7 +201,11 @@ export function runTool(name, input, { student, session }) {
       session.activeExerciseId = null;
       save();
       return {
-        result: { completed: true, outcome, verified_mistake_fixed: verifiedMistake, skill: ex.skill, mastery: student.skills[ex.skill]?.mastery },
+        result: {
+          completed: true,
+          outcome,
+          ...(outcome !== input.outcome ? { note: `recorded as ${outcome}: a mistake was logged on this exercise` } : {}),
+          verified_mistake_fixed: verifiedMistake, skill: ex.skill, mastery: student.skills[ex.skill]?.mastery },
         summary: `${ex.problem} completed (${outcome})${verifiedMistake ? `, mistake ${verifiedMistake} verified fixed` : ""}`,
       };
     }

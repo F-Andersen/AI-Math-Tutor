@@ -60,15 +60,17 @@ test("tool loop checks the step, logs the mistake and returns the tutor reply", 
   assert.equal(toolResult.tool_use_id, "tu_1");
   assert.equal(JSON.parse(toolResult.content).equivalent, false);
 
-  // Context (profile + exercise) was given on the first user turn.
-  const first = requests[0].messages[0].content.map((b) => b.text).join("\n");
-  assert.match(first, /\[Active exercise.*\]\nSolve: 3\(x \+ 4\) = 2x \+ 19/);
-  assert.match(first, /\[Student\]\n3x \+ 4 = 2x \+ 19/);
+  // The student's words are a plain user turn; context is a separate system message.
+  const [userMsg, sysMsg] = requests[0].messages;
+  assert.deepEqual(userMsg, { role: "user", content: "3x + 4 = 2x + 19" });
+  assert.equal(sysMsg.role, "system");
+  assert.match(sysMsg.content, /Active exercise \(chosen by the student\): 3\(x \+ 4\) = 2x \+ 19/);
+  assert.match(sysMsg.content, /Student profile:/);
 
-  // Request shape.
-  assert.equal(requests[0].model, "claude-opus-5-5");
+  // Request shape: Haiku 5.5 by default, no fallbacks (Haiku has none).
+  assert.equal(requests[0].model, "claude-haiku-5-5");
   assert.equal(requests[0].output_config.effort, "medium");
-  assert.equal(requests[0].fallbacks, "default");
+  assert.equal(requests[0].fallbacks, undefined);
   assert.equal(requests[0].tools.length, 6);
 
   // History is append-only: each request extends the previous one.

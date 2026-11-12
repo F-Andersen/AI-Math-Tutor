@@ -1,5 +1,12 @@
 node_modules/
 data/
-.env
-*.log
 .claude/
+*.log
+
+# Secrets must never be committed. The app reads ANTHROPIC_API_KEY from the
+# process environment only; these patterns are a safety net.
+.env
+.env.*
+*.pem
+*.key
+secrets*
