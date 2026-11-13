@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { tutorTurn, describeError, aiConfigured, MODEL } from "./tutor/agent.js";
 import { createExercise, activeExercise } from "./tutor/tools.js";
-import { getStudent, snapshot, resetStudent, newId, flush, publicExercise, save } from "./store.js";
+import { getStudent, snapshot, resetStudent, newId, flush, publicExercise, publicTrace, save } from "./store.js";
 import { MathError } from "./math/engine.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -169,7 +169,7 @@ const routes = {
     try {
       const turn = await tutorTurn({ student, session, text });
       session.turns += 1;
-      return { reply: turn.reply, trace: turn.trace, ...state(student, session) };
+      return { reply: turn.reply, trace: publicTrace(turn.trace), ...state(student, session) };
     } finally {
       session.busy = false;
       busyStudents.delete(student.id);

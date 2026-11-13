@@ -97,6 +97,31 @@ function publicMistake(m) {
   return { id: m.id, skill: m.skill, error_type: m.error_type, description: m.description, student_work: m.student_work, verified: m.verified };
 }
 
+const TRACE_SUMMARIES = {
+  check_step: "Step checked against the previous equation.",
+  check_answer: "Answer checked by substitution.",
+  solve_equation: "Equation analyzed privately for the tutor.",
+  record_mistake: "Reasoning mistake recorded.",
+  complete_exercise: "Exercise completed.",
+  start_exercise: "Exercise started.",
+  assign_practice_problem: "Practice problem assigned.",
+  refusal: "The tutor declined this turn.",
+};
+
+/** Raw tool arguments and summaries can contain solutions or private notes,
+ * even when the tutor's reply does not. Publish only operation and status.
+ */
+export function publicTrace(trace) {
+  return trace.map(entry => {
+    const tool = Object.hasOwn(TRACE_SUMMARIES, entry.tool) ? entry.tool : "unknown";
+    const ok = entry.ok === true;
+    let summary = ok ? TRACE_SUMMARIES[tool] : "Tool request rejected.";
+    if (ok && tool === "check_step")
+      summary = entry.summary.includes(" — INVALID (") ? "Step changes the solution set." : "Step preserves the solution set.";
+    return { tool, summary, ok };
+  });
+}
+
 /** Compact view for the UI (sanitised: no answers). */
 export function snapshot(student) {
   const done = student.exercises.filter((e) => e.status === "completed");

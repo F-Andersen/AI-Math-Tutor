@@ -18,7 +18,16 @@ test("student mutations are blocked during a turn, and failure/retry preserves p
     for await (const _ of req) { /* consume the SDK request */ }
     const step = ++calls;
     let content;
-    if (step === 1) {
+    if (phase === "privacy" && step === 1) {
+      content = [
+        { name: "solve_equation", input: { equation: "3x = 9" } },
+        { name: "check_step", input: { previous_equation: "3x = 9", student_equation: "x = 3" } },
+        { name: "check_answer", input: { equation: "3x = 9", value: "3" } },
+        { name: "record_mistake", input: { skill: "equation_balance", error_type: "changed_one_side", description: "You changed only one side.", student_work: "3x = 10", correct_work: "PRIVATE_CORRECT_WORK" } },
+        { name: "assign_practice_problem", input: { equation: "2x = 8", skill: "equation_balance", targets_mistake_id: "", rationale: "PRIVATE_RATIONALE" } },
+        { name: "private_unknown_tool_x = 3", input: {} },
+      ].map((call, i) => ({ type: "tool_use", id: `tu_private_${i}`, ...call }));
+    } else if (step === 1) {
       content = [{ type: "tool_use", id: "tu_http", name: phase === "failure" ? "check_step" : "complete_exercise",
         input: phase === "failure"
           ? { previous_equation: "2x = 14", student_equation: "x = 7" }
@@ -28,7 +37,7 @@ test("student mutations are blocked during a turn, and failure/retry preserves p
         waiting.resolve();
         await release.promise;
       }
-      content = phase === "failure" ? [] : [{ type: "text", text: "Your answer is correct." }];
+      content = phase === "failure" ? [] : [{ type: "text", text: phase === "privacy" ? "Check both sides of your equation." : "Your answer is correct." }];
     }
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ id: "msg_http", type: "message", role: "assistant", model: "claude-haiku-5-5", content,
@@ -90,4 +99,17 @@ test("student mutations are blocked during a turn, and failure/retry preserves p
   assert.equal(done.activeExercise, null);
   assert.equal(done.progress.skills.inverse_operations.attempts, 1);
   assert.equal((await post("/api/exercise", { sessionId: afterFailure.sessionId, problem: "3x = 9" })).status, 200);
+
+  await t.test("the message response strips private tool inputs and calculated answers from traces", async () => {
+    phase = "privacy";
+    calls = 0;
+    const response = await post("/api/message", { sessionId: afterFailure.sessionId, text: "3x = 10" });
+    assert.equal(response.status, 200);
+    const raw = await response.text();
+    assert.doesNotMatch(raw, /PRIVATE_|correct_work|rationale|"input"|solutions|x = 3/);
+    const data = JSON.parse(raw);
+    assert.equal(data.trace.length, 6);
+    assert.equal(data.activeExercise.problem, "3x = 9");
+    assert.deepEqual(data.activeExercise.steps, []); // the tutor's own line stays private
+  });
 });
