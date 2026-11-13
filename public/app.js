@@ -305,7 +305,18 @@ async function startExercise(problem) {
 }
 
 async function startSession() {
-  const r = await api("/api/session", { studentId: state.studentId });
+  // After a reload the previous reply may still be in progress on the server
+  // (it answers 409 until that turn finishes), so wait for it instead of failing.
+  let r;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      r = await api("/api/session", { studentId: state.studentId });
+      break;
+    } catch (err) {
+      if (err.status !== 409 || attempt >= 30) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+  }
   state.sessionId = r.sessionId;
   render(r);
   // An exercise left unfinished (page reload, expired session) is picked up again.

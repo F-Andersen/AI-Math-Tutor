@@ -61,6 +61,12 @@ test("treats X and x as the same variable (phone keyboards capitalise)", () => {
   assert.equal(checkAnswer("3(X + 4) = 2X + 19", "X = 7").satisfies_equation, true);
 });
 
+test("reads Cyrillic х and у as the variables x and y", () => {
+  assert.equal(checkStep("3(x + 4) = 2x + 19", "3х + 12 = 2х + 19").equivalent, true);
+  assert.equal(checkAnswer("3(x + 4) = 2x + 19", "х = 7").satisfies_equation, true);
+  assert.deepEqual(analyzeEquation("2у = 8").solutions, ["y = 4"]);
+});
+
 test("never reports a step it cannot verify as an error", () => {
   // Same equation scaled: provably equivalent at any degree.
   assert.equal(checkStep("x^3 = 8", "2x^3 = 16").equivalent, true);

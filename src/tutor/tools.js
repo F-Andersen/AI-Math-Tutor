@@ -1,7 +1,7 @@
 // Tools the tutor model can call. Math tools give it verified ground truth
 // (it never has to trust its own mental arithmetic); progress tools are the
 // only way state changes, so tracking reflects what the tutor actually did.
-import { analyzeEquation, checkStep, checkAnswer, MathError } from "../math/engine.js";
+import { analyzeEquation, checkStep, checkAnswer, MathError, latinVariables } from "../math/engine.js";
 import { newId, save, updateSkill, addMistakeToSkill } from "../store.js";
 
 export const SKILLS = [
@@ -76,7 +76,7 @@ export const TOOLS = [
   {
     name: "complete_exercise",
     description:
-      "Mark the active exercise as finished. The server verifies the final answer by substitution and rejects completion if it is wrong. outcome: 'independent' = solved with no help on this exercise, 'with_guidance' = solved after hints/corrections, 'revealed' = you had to give the answer.",
+      "Mark the active exercise as finished only after the student states its final answer in their current message. The server verifies that the student wrote this value and that it satisfies the original equation. Never use your own computed solution to finish an exercise. outcome: 'independent' = solved with no help on this exercise, 'with_guidance' = solved after hints/corrections, 'revealed' = you had to give the answer.",
     input_schema: {
       type: "object",
       properties: {
@@ -90,7 +90,7 @@ export const TOOLS = [
   {
     name: "start_exercise",
     description:
-      "Make an equation the student brought up in chat the active exercise, so it appears in their notebook and its steps and result are tracked. Use it when the student asks to work on an equation that is not the active exercise. Not for problems you invent: use assign_practice_problem for those.",
+      "When no exercise is active, make an equation the student brought up in chat the active exercise, so their work is tracked. This cannot replace an unfinished exercise: the student must use the new equation form to switch. Never start an intermediate line as a new exercise. Not for problems you invent: use assign_practice_problem for those.",
     input_schema: {
       type: "object",
       properties: { equation: { type: "string", description: "The student's equation, e.g. '2x + 3 = 11'" } },
@@ -119,7 +119,7 @@ const clip = (v, n) => String(v ?? "").trim().slice(0, n);
 
 /** Canonical form of a line of work, for comparing what was written (not its value). */
 const canon = (s) =>
-  String(s ?? "")
+  latinVariables(s ?? "")
     .toLowerCase()
     .replace(/[−–—]/g, "-")
     .replace(/[×·∙⋅*]/g, "")
@@ -129,6 +129,31 @@ const canon = (s) =>
 
 /** Did the student write this line in their current message? */
 const writtenByStudent = (line, studentText) => canon(studentText).includes(canon(line));
+
+/** Require a stated value, not a digit buried in an intermediate equation.
+ * Compare exact fractions through the engine, so 14/2 and 7 are the same answer.
+ */
+function answerWrittenByStudent(problem, check, studentText) {
+  const text = latinVariables(studentText).replace(/[−–—]/g, "-").replace(/÷/g, "/");
+  const variable = check.substituted.split(" = ")[0];
+  const literal = "[+-]?\\s*(?:\\d+(?:[.,]\\d+)?|[.,]\\d+)(?:\\s*/\\s*[+-]?\\s*\\d+(?:[.,]\\d+)?)?";
+  const candidates = [];
+  const assignments = new RegExp(`\\b${variable}\\s*=\\s*(${literal})(?![\\p{L}\\p{N}_/]|[.,]\\d)`, "giu");
+  for (const match of text.matchAll(assignments)) {
+    const before = text.slice(0, match.index).split("\n").at(-1).trimEnd();
+    const after = text.slice(match.index + match[0].length).trimStart();
+    // Exclude 2x = 7, 3 + x = 7, and x = 7 + 1.
+    if (/[\d+*/^=(\-]$/.test(before) || /^[+*/^=)\-]/.test(after)) continue;
+    candidates.push(match[1]);
+  }
+  // Bare values and prose such as "my answer is 7" must contain no other math.
+  const plain = text.match(new RegExp(`^[\\p{L}\\p{M}\\s,:]*?(${literal})[\\p{L}\\p{M}\\s.!?,;]*$`, "u"));
+  if (plain) candidates.push(plain[1]);
+  return candidates.some(value => {
+    try { return checkAnswer(problem, value).substituted === check.substituted; }
+    catch (err) { if (err instanceof MathError) return false; throw err; }
+  });
+}
 
 function requireFields(input, fields) {
   for (const f of fields) if (!str(input?.[f])) throw new MathError(`Missing field "${f}"`);
@@ -184,7 +209,7 @@ function addStep(ex, line, equivalent, transformation) {
  * written to their notebook, so a line the tutor checks for itself (for
  * example the correct one) can never appear there.
  */
-export function runTool(name, input, { student, session, studentText = "" }) {
+export function runTool(name, input, { student, session, studentText = "", answerExerciseId = session.activeExerciseId }) {
   const ex = activeExercise(student, session);
   switch (name) {
     case "check_step": {
@@ -237,11 +262,18 @@ export function runTool(name, input, { student, session, studentText = "" }) {
     case "complete_exercise": {
       requireFields(input, ["final_answer", "outcome"]);
       if (!ex) throw new MathError("There is no active exercise to complete");
+      if (ex.id !== answerExerciseId && !(ex.source === "student" && writtenByStudent(ex.problem, studentText)))
+        throw new MathError("This exercise was just assigned. Wait for the student's next message before completing it.");
       const check = checkAnswer(ex.problem, input.final_answer);
       if (!check.satisfies_equation)
         return {
           result: { completed: false, reason: "final_answer does not satisfy the equation", check },
           summary: `rejected: ${input.final_answer} is not a solution`,
+        };
+      if (!answerWrittenByStudent(ex.problem, check, studentText))
+        return {
+          result: { completed: false, reason: "The student has not stated this final answer. Continue the current exercise; ask them to write their answer as x = value before completing it." },
+          summary: "rejected: the student has not stated the final answer",
         };
       let outcome = ["independent", "with_guidance", "revealed"].includes(input.outcome) ? input.outcome : "with_guidance";
       // Progress must stay honest: an exercise with a logged mistake was not solved independently.
@@ -296,9 +328,10 @@ export function runTool(name, input, { student, session, studentText = "" }) {
       requireFields(input, ["equation"]);
       if (ex && canon(ex.problem) === canon(input.equation))
         return { result: { exercise_id: ex.id, now_active: true, note: "this is already the active exercise" }, summary: `${ex.problem} (already active)` };
-      // Only the student can switch exercises mid-way, and only by naming the new equation themselves.
-      if (ex && !writtenByStudent(input.equation, studentText))
-        throw new MathError(`"${ex.problem}" is still in progress and the student did not ask for this equation. Continue with the active exercise.`);
+      // A written equation may be an incorrect intermediate step, not consent
+      // to abandon the notebook. Only the explicit HTTP exercise action switches.
+      if (ex)
+        throw new MathError(`"${ex.problem}" is still in progress. Continue with the active exercise. If the student wants to switch, ask them to use the new equation form.`);
       const created = createExercise(student, { problem: clip(input.equation, 120), source: "student" });
       activate(student, session, created);
       return { result: { exercise_id: created.id, now_active: true, solution_for_tutor_only: created.solutions }, summary: created.problem };

@@ -92,8 +92,15 @@ class Poly {
 }
 
 // ---------- Tokenizer & parser ----------
+/**
+ * Cyrillic letters that look identical to the usual variable names. On a
+ * Ukrainian or Russian keyboard a student types "х = 7" with the Cyrillic
+ * letter; it must mean the same as the Latin "x = 7".
+ */
+export const latinVariables = (s) => String(s).replace(/[хХ]/g, "x").replace(/[уУ]/g, "y");
+
 function normalizeInput(s) {
-  return String(s)
+  return latinVariables(s)
     .replace(/[−–—]/g, "-")
     .replace(/[×·∙⋅]/g, "*")
     .replace(/÷/g, "/")

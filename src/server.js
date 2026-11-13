@@ -47,6 +47,12 @@ class HttpError extends Error {
 
 /** In-memory tutoring sessions (conversation history). Progress itself is persisted. */
 const sessions = new Map();
+// All sessions for one student share progress. Protect an in-flight draft from
+// changes in another tab, a reload, or a reset until it commits or is discarded.
+const busyStudents = new Set();
+function requireIdleStudent(studentId) {
+  if (busyStudents.has(studentId)) throw new HttpError(409, "Wait for the tutor to finish answering.");
+}
 setInterval(() => {
   const cutoff = Date.now() - SESSION_IDLE_MS;
   for (const [id, s] of sessions) if (s.lastSeen < cutoff && !s.busy) sessions.delete(id);
@@ -117,6 +123,7 @@ const routes = {
 
   "POST /api/session": async (body) => {
     if (!validId(body.studentId)) throw new HttpError(400, "Invalid student id");
+    requireIdleStudent(body.studentId);
     if (sessions.size >= MAX_SESSIONS) throw new HttpError(503, "The tutor is at capacity. Try again later.");
     const student = getStudent(body.studentId);
     // Resume the exercise that was in progress (e.g. after a page reload);
@@ -132,6 +139,7 @@ const routes = {
 
   "POST /api/exercise": async (body) => {
     const session = sessionFrom(body);
+    requireIdleStudent(session.studentId);
     if (session.busy) throw new HttpError(409, "Wait for the tutor to finish answering.");
     const student = getStudent(session.studentId);
     const problem = String(body.problem ?? "").trim().slice(0, 120);
@@ -149,6 +157,7 @@ const routes = {
     const text = String(body.text ?? "").trim().slice(0, 2000);
     if (!text) throw new HttpError(400, "Empty message");
     if (!aiConfigured()) throw new HttpError(503, "The tutor is offline: the server has no Anthropic API key configured.");
+    requireIdleStudent(session.studentId);
     if (session.busy) throw new HttpError(409, "The tutor is still answering.");
     if (session.turns >= MAX_TURNS_PER_SESSION) throw new HttpError(409, "This conversation is very long. Reload the page to start a fresh one — your progress is saved.");
     rateLimit("session", session.id);
@@ -156,17 +165,20 @@ const routes = {
 
     const student = getStudent(session.studentId);
     session.busy = true;
+    busyStudents.add(student.id);
     try {
       const turn = await tutorTurn({ student, session, text });
       session.turns += 1;
       return { reply: turn.reply, trace: turn.trace, ...state(student, session) };
     } finally {
       session.busy = false;
+      busyStudents.delete(student.id);
     }
   },
 
   "POST /api/reset": async (body) => {
     if (!validId(body.studentId)) throw new HttpError(400, "Invalid student id");
+    requireIdleStudent(body.studentId);
     resetStudent(body.studentId);
     for (const [id, s] of sessions) if (s.studentId === body.studentId) sessions.delete(id);
     return { ok: true };
