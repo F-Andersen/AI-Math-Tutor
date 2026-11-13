@@ -1,13 +1,13 @@
 // Minimal HTTP server: JSON API + static frontend. No framework needed.
-// The Anthropic API key is read from the process environment only; it is never
-// sent to the browser and never read from a file in the project folder.
+// The Anthropic API key comes from the process environment (the npm scripts
+// also load an optional, git-ignored .env file); it is never sent to the browser.
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { tutorTurn, describeError, aiConfigured, MODEL } from "./tutor/agent.js";
 import { createExercise, activeExercise } from "./tutor/tools.js";
-import { getStudent, snapshot, resetStudent, newId, flush, publicExercise } from "./store.js";
+import { getStudent, snapshot, resetStudent, newId, flush, publicExercise, save } from "./store.js";
 import { MathError } from "./math/engine.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -17,7 +17,26 @@ const PORT = Number(process.env.PORT) || 3000;
 const SESSION_IDLE_MS = 2 * 60 * 60 * 1000; // drop conversations idle for 2 h
 const MAX_SESSIONS = 2000;
 const MAX_TURNS_PER_SESSION = 80;
-const RATE_LIMIT = { windowMs: 5 * 60 * 1000, max: 30 }; // tutor messages per IP per window
+const WINDOW_MS = 5 * 60 * 1000;
+// Per window. Tutor messages cost money, so they are limited per conversation
+// (one student) and per address (a whole classroom can share one address, so
+// that ceiling is higher and configurable). "request" covers every API call.
+const LIMITS = {
+  session: 20,
+  message: Number(process.env.MESSAGES_PER_ADDRESS) || 150,
+  request: 600,
+};
+// Behind a reverse proxy (nginx, Caddy, a PaaS) every request comes from the
+// proxy's address. Set TRUST_PROXY=1 there so limits apply per real client.
+const TRUST_PROXY = process.env.TRUST_PROXY === "1";
+
+const SECURITY_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "no-referrer",
+  "Content-Security-Policy":
+    "default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+};
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -33,18 +52,27 @@ setInterval(() => {
   for (const [id, s] of sessions) if (s.lastSeen < cutoff && !s.busy) sessions.delete(id);
 }, 10 * 60 * 1000).unref();
 
-/** Simple fixed-window rate limiter so a public demo link cannot burn API credit. */
+/** Simple fixed-window rate limiter so a public demo link cannot burn API credit or fill the disk. */
 const hits = new Map();
-function rateLimit(ip) {
+function rateLimit(kind, ip) {
+  const key = `${kind}:${ip}`;
   const now = Date.now();
-  const h = hits.get(ip);
-  if (!h || now - h.start > RATE_LIMIT.windowMs) return void hits.set(ip, { start: now, count: 1 });
-  if (++h.count > RATE_LIMIT.max) throw new HttpError(429, "Too many messages. Take a short break and try again in a few minutes.");
+  const h = hits.get(key);
+  if (!h || now - h.start > WINDOW_MS) return void hits.set(key, { start: now, count: 1 });
+  if (++h.count > LIMITS[kind]) throw new HttpError(429, "Too many requests. Take a short break and try again in a few minutes.");
 }
 setInterval(() => {
-  const cutoff = Date.now() - RATE_LIMIT.windowMs;
-  for (const [ip, h] of hits) if (h.start < cutoff) hits.delete(ip);
-}, RATE_LIMIT.windowMs).unref();
+  const cutoff = Date.now() - WINDOW_MS;
+  for (const [key, h] of hits) if (h.start < cutoff) hits.delete(key);
+}, WINDOW_MS).unref();
+
+function clientIp(req) {
+  if (TRUST_PROXY) {
+    const forwarded = String(req.headers["x-forwarded-for"] ?? "").split(",")[0].trim();
+    if (forwarded) return forwarded;
+  }
+  return req.socket.remoteAddress ?? "unknown";
+}
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -54,7 +82,7 @@ const MIME = {
 };
 
 function send(res, status, body) {
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+  res.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   res.end(JSON.stringify(body));
 }
 
@@ -91,7 +119,13 @@ const routes = {
     if (!validId(body.studentId)) throw new HttpError(400, "Invalid student id");
     if (sessions.size >= MAX_SESSIONS) throw new HttpError(503, "The tutor is at capacity. Try again later.");
     const student = getStudent(body.studentId);
-    const session = { id: newId("s"), studentId: student.id, messages: [], activeExerciseId: null, busy: false, turns: 0, lastSeen: Date.now() };
+    // Resume the exercise that was in progress (e.g. after a page reload);
+    // older unfinished ones are closed so they do not pile up as "active".
+    const open = student.exercises.filter((e) => e.status === "active");
+    const resume = open.pop() ?? null;
+    for (const e of open) e.status = "abandoned";
+    if (open.length) save();
+    const session = { id: newId("s", 16), studentId: student.id, messages: [], activeExerciseId: resume?.id ?? null, busy: false, turns: 0, lastSeen: Date.now() };
     sessions.set(session.id, session);
     return { sessionId: session.id, ...state(student, session) };
   },
@@ -106,6 +140,7 @@ const routes = {
     const prev = activeExercise(student, session);
     if (prev) prev.status = "abandoned";
     session.activeExerciseId = ex.id;
+    save();
     return state(student, session);
   },
 
@@ -116,7 +151,8 @@ const routes = {
     if (!aiConfigured()) throw new HttpError(503, "The tutor is offline: the server has no Anthropic API key configured.");
     if (session.busy) throw new HttpError(409, "The tutor is still answering.");
     if (session.turns >= MAX_TURNS_PER_SESSION) throw new HttpError(409, "This conversation is very long. Reload the page to start a fresh one — your progress is saved.");
-    rateLimit(req.socket.remoteAddress ?? "unknown");
+    rateLimit("session", session.id);
+    rateLimit("message", clientIp(req));
 
     const student = getStudent(session.studentId);
     session.busy = true;
@@ -137,15 +173,18 @@ const routes = {
   },
 };
 
-function serveStatic(pathname, res) {
+function serveStatic(method, pathname, res) {
   const rel = pathname === "/" ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
   const file = path.resolve(PUBLIC, rel);
   if (!file.startsWith(PUBLIC + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
     return res.end("Not found");
   }
-  res.writeHead(200, { "Content-Type": MIME[path.extname(file)] ?? "application/octet-stream" });
-  fs.createReadStream(file).pipe(res);
+  res.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": MIME[path.extname(file)] ?? "application/octet-stream", "Cache-Control": "no-cache" });
+  if (method === "HEAD") return res.end();
+  fs.createReadStream(file)
+    .on("error", () => res.destroy()) // file vanished mid-read: drop the connection, keep the server
+    .pipe(res);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -153,9 +192,10 @@ const server = http.createServer(async (req, res) => {
     const { pathname } = new URL(req.url, "http://localhost");
     const handler = routes[`${req.method} ${pathname}`];
     if (!handler) {
-      if (req.method === "GET" || req.method === "HEAD") return serveStatic(pathname, res);
+      if (req.method === "GET" || req.method === "HEAD") return serveStatic(req.method, pathname, res);
       throw new HttpError(404, "Not found");
     }
+    if (req.method === "POST") rateLimit("request", clientIp(req));
     const body = req.method === "POST" ? await readJson(req) : {};
     send(res, 200, await handler(body, req));
   } catch (err) {
@@ -167,6 +207,14 @@ const server = http.createServer(async (req, res) => {
     console.error("[tutor]", err);
     send(res, status, { error: message });
   }
+});
+
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(`Port ${PORT} is already in use: another copy of the server is probably still running. Stop it, or set PORT to a free port.`);
+    process.exit(1);
+  }
+  throw err;
 });
 
 server.listen(PORT, () => {

@@ -56,6 +56,20 @@ test("solves quadratics and special cases", () => {
   assert.equal(analyzeEquation("x + 1 = x + 2").solution_kind, "no_solution");
 });
 
+test("treats X and x as the same variable (phone keyboards capitalise)", () => {
+  assert.equal(checkStep("x + 12 = 19", "X = 7").equivalent, true);
+  assert.equal(checkAnswer("3(X + 4) = 2X + 19", "X = 7").satisfies_equation, true);
+});
+
+test("never reports a step it cannot verify as an error", () => {
+  // Same equation scaled: provably equivalent at any degree.
+  assert.equal(checkStep("x^3 = 8", "2x^3 = 16").equivalent, true);
+  // Different cubic equations: refuses to judge instead of guessing "invalid".
+  assert.throws(() => checkStep("x^3 = 8", "x^3 = 27"), /cannot be verified/);
+  // Two equations with no real solution are equivalent.
+  assert.equal(checkStep("x^2 = -1", "x + 1 = x + 2").equivalent, true);
+});
+
 test("checks a proposed answer by substitution", () => {
   assert.equal(checkAnswer("3(x + 4) = 2x + 19", "7").satisfies_equation, true);
   const wrong = checkAnswer("3(x + 4) = 2x + 19", "x = 15");

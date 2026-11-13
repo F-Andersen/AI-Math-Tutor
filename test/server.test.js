@@ -59,3 +59,30 @@ test("invalid equations are rejected without replacing the active exercise", asy
   const { progress } = await again.json();
   assert.deepEqual(progress.exercises.map((e) => [e.problem, e.status]), [["3x = 9", "active"], ["2x = 8", "abandoned"]]);
 });
+
+test("an unfinished exercise is resumed in a new session (page reload)", async () => {
+  const studentId = "st_srvtest03";
+  const first = await (await post("/api/session", { studentId })).json();
+  await post("/api/exercise", { sessionId: first.sessionId, problem: "2x = 8" });
+  await post("/api/exercise", { sessionId: first.sessionId, problem: "3x = 9" });
+  const second = await (await post("/api/session", { studentId })).json();
+  assert.notEqual(second.sessionId, first.sessionId);
+  assert.equal(second.activeExercise.problem, "3x = 9");
+  assert.equal(second.progress.exercises.filter((e) => e.status === "active").length, 1);
+  assert.ok(second.sessionId.length >= 32); // not guessable
+});
+
+test("reserved ids do not break the server, and responses carry security headers", async () => {
+  const r = await post("/api/session", { studentId: "__proto__" });
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).progress.totals.exercises_completed, 0);
+  const page = await fetch(`${base}/`);
+  assert.equal(page.headers.get("x-content-type-options"), "nosniff");
+  assert.match(page.headers.get("content-security-policy"), /default-src 'self'/);
+});
+
+test("API calls are rate limited per address", async () => {
+  let last;
+  for (let i = 0; i < 620; i++) last = await post("/api/reset", { studentId: "st_ratelimit1" });
+  assert.equal(last.status, 429);
+});

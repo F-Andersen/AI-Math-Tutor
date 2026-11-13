@@ -3,8 +3,8 @@ data/
 .claude/
 *.log
 
-# Secrets must never be committed. The app reads ANTHROPIC_API_KEY from the
-# process environment only; these patterns are a safety net.
+# Secrets must never be committed. The API key lives in the environment or in
+# a local .env file, which these patterns keep out of git.
 .env
 .env.*
 *.pem

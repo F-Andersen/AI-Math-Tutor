@@ -99,6 +99,7 @@ function normalizeInput(s) {
     .replace(/÷/g, "/")
     .replace(/²/g, "^2")
     .replace(/,/g, ".")
+    .toLowerCase() // phone keyboards capitalise: "X = 7" is the same variable as "x"
     .trim();
 }
 
@@ -248,11 +249,22 @@ function describe(eq) {
   };
 }
 
+const isEmpty = (s) => s.kind === "no_solution" || s.kind === "no_real_solution";
+
 function sameSolutionSet(a, b) {
+  if (isEmpty(a) && isEmpty(b)) return true;
   if (a.kind !== b.kind) return false;
-  if (a.kind !== "finite") return a.kind !== "unsupported_degree";
+  if (a.kind !== "finite") return true; // both "all real numbers"
   if (a.values.length !== b.values.length) return false;
   return a.values.every((x, i) => Math.abs(numVal(x) - numVal(b.values[i])) < 1e-9);
+}
+
+/** True when q = k·p for a non-zero constant k: the equations p = 0 and q = 0 are then equivalent at any degree. */
+function proportional(p, q) {
+  if (!p.t.size || !q.t.size) return p.t.size === q.t.size;
+  const k = p.degree();
+  if (q.degree() !== k) return false;
+  return p.scale(q.coef(k).div(p.coef(k))).eq(q);
 }
 
 const strip = ({ _sol, ...rest }) => rest;
@@ -273,7 +285,12 @@ export function checkStep(previous, next) {
   const B = parseEquation(next, ctx);
   const v = ctx.variable ?? "x";
   const da = describe(A), db = describe(B);
-  const equivalent = sameSolutionSet(da._sol, db._sol);
+  let equivalent;
+  if (proportional(A.lhs.sub(A.rhs), B.lhs.sub(B.rhs))) equivalent = true;
+  else if (da._sol.kind === "unsupported_degree" || db._sol.kind === "unsupported_degree")
+    // Never guess: a correct step must not be reported as an error.
+    throw new MathError("This step involves a power above 2 and cannot be verified automatically; judge it yourself and say so if unsure");
+  else equivalent = sameSolutionSet(da._sol, db._sol);
 
   const lhsChange = B.lhs.sub(A.lhs), rhsChange = B.rhs.sub(A.rhs);
   let transformation;

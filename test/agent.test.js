@@ -71,7 +71,7 @@ test("tool loop checks the step, logs the mistake and returns the tutor reply", 
   assert.equal(requests[0].model, "claude-haiku-5-5");
   assert.equal(requests[0].output_config.effort, "medium");
   assert.equal(requests[0].fallbacks, undefined);
-  assert.equal(requests[0].tools.length, 6);
+  assert.equal(requests[0].tools.length, 7);
 
   // History is append-only: each request extends the previous one.
   assert.equal(requests[2].messages.length, requests[1].messages.length + 2);

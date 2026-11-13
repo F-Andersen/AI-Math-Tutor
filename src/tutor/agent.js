@@ -15,7 +15,8 @@ const USE_FALLBACKS = process.env.TUTOR_FALLBACKS !== "off" && FALLBACK_CAPABLE.
 const MAX_ITERATIONS = 10;
 
 let client = null;
-const getClient = () => (client ??= new Anthropic());
+// A student should not wait minutes on a stuck request: 60 s per attempt, one retry.
+const getClient = () => (client ??= new Anthropic({ timeout: 60_000, maxRetries: 1 }));
 export const aiConfigured = () => Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
 
 /**
@@ -28,11 +29,15 @@ function contextFor(student, session) {
   if (!session.profileSent) parts.push(`Student profile:\n${profileForTutor(student)}`);
   const ex = activeExercise(student, session);
   if ((ex?.id ?? "none") !== session.announcedExerciseId) {
-    parts.push(
-      ex
-        ? `Active exercise (${ex.source === "tutor" ? "a practice problem you assigned" : "chosen by the student"}): ${ex.problem}`
-        : "There is no active exercise now. If the student gives a new equation, work on it with them."
-    );
+    if (ex) {
+      parts.push(`Active exercise (${ex.source === "tutor" ? "a practice problem you assigned" : "chosen by the student"}): ${ex.problem}`);
+      // Resumed after a page reload: the chat is gone but the checked lines are not.
+      if (ex.steps.length)
+        parts.push(
+          "Lines of this exercise already checked in an earlier conversation:\n" +
+            ex.steps.map((s) => `- ${s.line} (${s.equivalent ? "valid" : "had an error"})`).join("\n")
+        );
+    } else parts.push("There is no active exercise now. If the student gives an equation to work on, start it as an exercise.");
   }
   return parts.join("\n\n");
 }
@@ -94,7 +99,7 @@ export async function tutorTurn({ student, session, text }) {
       const results = [];
       for (const call of toolUses) {
         try {
-          const { result, summary } = runTool(call.name, call.input, { student, session });
+          const { result, summary } = runTool(call.name, call.input, { student, session, studentText: text });
           trace.push({ tool: call.name, input: call.input, summary, ok: true });
           results.push({ type: "tool_result", tool_use_id: call.id, content: JSON.stringify(result) });
         } catch (err) {

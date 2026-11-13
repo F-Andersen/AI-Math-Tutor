@@ -10,7 +10,7 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "tutor-scenario-"))
 const { tutorTurn, aiConfigured, MODEL } = await import("../src/tutor/agent.js");
 const { createExercise, activeExercise } = await import("../src/tutor/tools.js");
 const { getStudent, snapshot } = await import("../src/store.js");
-const { analyzeEquation } = await import("../src/math/engine.js");
+const { analyzeEquation, parseEquation } = await import("../src/math/engine.js");
 
 if (!aiConfigured()) {
   console.error("Set the ANTHROPIC_API_KEY environment variable in this terminal to run the live scenario (see README).");
@@ -41,9 +41,14 @@ let practice = activeExercise(student, session);
 if (!practice) await say("Ok, what's next?"), (practice = activeExercise(student, session));
 if (practice) {
   console.log(`\n--- practice problem: ${practice.problem} ---`);
+  // A careful student: expand, move the x terms to one side, then give the answer.
   const a = analyzeEquation(practice.problem);
-  await say(a.simplified);
-  await say(a.solutions[0]);
+  const { lhs, rhs } = parseEquation(a.simplified);
+  const xTerm = parseEquation(`${rhs.coef(1)}x = 0`).lhs;
+  const moved = `${lhs.sub(xTerm).format()} = ${rhs.sub(xTerm).format()}`;
+  const answer = a.solutions[0];
+  for (const line of [...new Set([a.simplified, moved, answer])]) await say(line);
+  if (activeExercise(student, session)?.id === practice.id) await say(`I subtracted the same number from both sides, so ${answer}`);
 } else {
   console.log("\n(no practice problem was assigned)");
 }

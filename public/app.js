@@ -261,7 +261,8 @@ function announceChanges(progress, active) {
     }
   }
   // New practice problem from the tutor?
-  if (active && active.id !== state.activeId && active.source === "tutor") addEvent("practice", "New practice problem: ", active.problem);
+  if (active && active.id !== state.activeId)
+    active.source === "tutor" ? addEvent("practice", "New practice problem: ", active.problem) : addEvent("note", "New equation: ", active.problem);
   // Mistake saved to progress?
   const n = progress.totals.mistakes_found;
   if (n > state.mistakesSeen && progress.mistakes[0]) addEvent("note", `Saved to “Mistakes I’m working on”: ${skillName(progress.mistakes[0].skill)}`);
@@ -307,6 +308,8 @@ async function startSession() {
   const r = await api("/api/session", { studentId: state.studentId });
   state.sessionId = r.sessionId;
   render(r);
+  // An exercise left unfinished (page reload, expired session) is picked up again.
+  if (r.activeExercise) addEvent("note", "Continuing your equation: ", r.activeExercise.problem);
 }
 
 function insertAtCursor(textarea, text) {

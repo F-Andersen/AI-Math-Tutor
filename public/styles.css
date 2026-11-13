@@ -224,7 +224,7 @@ input:focus-visible, textarea:focus-visible { outline: 2px solid var(--blue); ou
 .chip:hover { border-color: var(--ink); color: var(--ink); }
 
 .composer { padding: 12px 20px 16px; border-top: 1px solid var(--line); margin-top: 8px; }
-.composer textarea { resize: none; min-height: 48px; max-height: 160px; font-size: 17px; line-height: 1.45; }
+.composer textarea {resize: none;min-height: 72px;max-height: 160px;font-size: 17px;line-height: 1.45;}
 .composer__bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
 .keys { display: flex; flex-wrap: wrap; gap: 6px; }
 .key {

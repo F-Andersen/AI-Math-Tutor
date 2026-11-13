@@ -24,7 +24,10 @@ export const TOOLS = [
       type: "object",
       properties: {
         previous_equation: { type: "string", description: "Last line known to be correct, e.g. '3(x + 4) = 2x + 19'" },
-        student_equation: { type: "string", description: "The student's new line, e.g. '3x + 4 = 2x + 19'" },
+        student_equation: {
+          type: "string",
+          description: "The student's new line, copied exactly as they wrote it, e.g. '3x + 4 = 2x + 19'. Only lines found in the student's message are added to their notebook.",
+        },
       },
       required: ["previous_equation", "student_equation"],
     },
@@ -59,7 +62,11 @@ export const TOOLS = [
       properties: {
         skill: { type: "string", enum: SKILLS },
         error_type: { type: "string", description: "Short snake_case label, e.g. 'distributed_to_first_term_only'" },
-        description: { type: "string", description: "One sentence describing the misconception." },
+        description: {
+          type: "string",
+          description:
+            "One sentence describing the misconception, addressed to the student in the second person (the student reads it in their progress page), e.g. 'You multiplied only the x by 3 and left the 4 unchanged.' Do not include the correct line or the answer.",
+        },
         student_work: { type: "string", description: "The incorrect line the student wrote." },
         correct_work: { type: "string", description: "What the line should have been (kept private, for the record)." },
       },
@@ -75,14 +82,25 @@ export const TOOLS = [
       properties: {
         final_answer: { type: "string", description: "Student's final value, e.g. '7'" },
         outcome: { type: "string", enum: ["independent", "with_guidance", "revealed"] },
+        skill: { type: "string", enum: SKILLS, description: "The main skill this exercise practised." },
       },
-      required: ["final_answer", "outcome"],
+      required: ["final_answer", "outcome", "skill"],
+    },
+  },
+  {
+    name: "start_exercise",
+    description:
+      "Make an equation the student brought up in chat the active exercise, so it appears in their notebook and its steps and result are tracked. Use it when the student asks to work on an equation that is not the active exercise. Not for problems you invent: use assign_practice_problem for those.",
+    input_schema: {
+      type: "object",
+      properties: { equation: { type: "string", description: "The student's equation, e.g. '2x + 3 = 11'" } },
+      required: ["equation"],
     },
   },
   {
     name: "assign_practice_problem",
     description:
-      "Create a follow-up practice problem that targets the same skill/misconception as a mistake the student just corrected (same structure, different numbers, integer solution). It becomes the active exercise and is shown to the student. Returns the solution for your reference only.",
+      "Only after complete_exercise has succeeded (it is rejected while an exercise is still in progress): create a follow-up practice problem that targets the same skill/misconception as a mistake the student just corrected (same structure, different numbers, integer solution). It becomes the active exercise and is shown to the student. Returns the solution for your reference only.",
     input_schema: {
       type: "object",
       properties: {
@@ -97,6 +115,20 @@ export const TOOLS = [
 ];
 
 const str = (v) => typeof v === "string" && v.trim().length > 0;
+const clip = (v, n) => String(v ?? "").trim().slice(0, n);
+
+/** Canonical form of a line of work, for comparing what was written (not its value). */
+const canon = (s) =>
+  String(s ?? "")
+    .toLowerCase()
+    .replace(/[−–—]/g, "-")
+    .replace(/[×·∙⋅*]/g, "")
+    .replace(/÷/g, "/")
+    .replace(/,/g, ".")
+    .replace(/\s+/g, "");
+
+/** Did the student write this line in their current message? */
+const writtenByStudent = (line, studentText) => canon(studentText).includes(canon(line));
 
 function requireFields(input, fields) {
   for (const f of fields) if (!str(input?.[f])) throw new MathError(`Missing field "${f}"`);
@@ -130,18 +162,40 @@ export function createExercise(student, { problem, skill = "other", source, targ
   return ex;
 }
 
-/** Execute one tool call. Returns { result, uiEvent }. Throws MathError for bad input. */
-export function runTool(name, input, { student, session }) {
+/** Replace the session's active exercise. The new one must already be created (validated). */
+function activate(student, session, created) {
+  const prev = activeExercise(student, session);
+  if (prev && prev.id !== created.id) prev.status = "abandoned";
+  session.activeExerciseId = created.id;
+  save();
+}
+
+/** Add a verified line to the student's notebook (no consecutive duplicates). */
+function addStep(ex, line, equivalent, transformation) {
+  const last = ex.steps.at(-1);
+  if (last && canon(last.line) === canon(line)) return;
+  ex.steps.push({ line: clip(line, 120), equivalent, transformation });
+  save();
+}
+
+/**
+ * Execute one tool call. Returns { result, summary }. Throws MathError for bad input.
+ * studentText is the student's current message: only lines found in it are
+ * written to their notebook, so a line the tutor checks for itself (for
+ * example the correct one) can never appear there.
+ */
+export function runTool(name, input, { student, session, studentText = "" }) {
   const ex = activeExercise(student, session);
   switch (name) {
     case "check_step": {
       requireFields(input, ["previous_equation", "student_equation"]);
       const r = checkStep(input.previous_equation, input.student_equation);
-      if (ex) {
-        ex.steps.push({ line: input.student_equation, equivalent: r.equivalent, transformation: r.transformation });
-        save();
-      }
-      return { result: r, summary: `${input.student_equation} — ${r.equivalent ? "valid" : "INVALID"} (${r.transformation})` };
+      if (ex && writtenByStudent(input.student_equation, studentText))
+        addStep(ex, input.student_equation, r.equivalent, r.transformation);
+      return {
+        result: { ...r, reminder: "For your judgement only: do not tell the student any solution value from this report until they state the answer themselves." },
+        summary: `${input.student_equation} — ${r.equivalent ? "valid" : "INVALID"} (${r.transformation})`,
+      };
     }
     case "check_answer": {
       requireFields(input, ["equation", "value"]);
@@ -156,15 +210,18 @@ export function runTool(name, input, { student, session }) {
     case "record_mistake": {
       requireFields(input, ["skill", "error_type", "description", "student_work"]);
       const skill = SKILLS.includes(input.skill) ? input.skill : "other";
+      // The same wrong line on the same exercise is one mistake (e.g. a retried turn).
+      const dup = student.mistakes.find((x) => x.exerciseId === (ex?.id ?? null) && canon(x.student_work) === canon(input.student_work));
+      if (dup) return { result: { mistake_id: dup.id, logged: true, already_logged: true }, summary: `${dup.skill} / ${dup.error_type} (already logged)` };
       const m = {
         id: newId("m"),
         exerciseId: ex?.id ?? null,
         problem: ex?.problem ?? null,
         skill,
-        error_type: input.error_type,
-        description: input.description,
-        student_work: input.student_work,
-        correct_work: input.correct_work ?? "",
+        error_type: clip(input.error_type, 60),
+        description: clip(input.description, 300),
+        student_work: clip(input.student_work, 120),
+        correct_work: clip(input.correct_work, 120),
         verified: false,
         at: new Date().toISOString(),
       };
@@ -189,6 +246,8 @@ export function runTool(name, input, { student, session }) {
       let outcome = ["independent", "with_guidance", "revealed"].includes(input.outcome) ? input.outcome : "with_guidance";
       // Progress must stay honest: an exercise with a logged mistake was not solved independently.
       if (outcome === "independent" && ex.mistakes > 0) outcome = "with_guidance";
+      if (ex.skill === "other" && SKILLS.includes(input.skill)) ex.skill = input.skill;
+      if (outcome !== "revealed") addStep(ex, check.substituted, true, "final answer verified by substitution");
       ex.status = "completed";
       ex.outcome = outcome;
       ex.completedAt = new Date().toISOString();
@@ -211,20 +270,38 @@ export function runTool(name, input, { student, session }) {
     }
     case "assign_practice_problem": {
       requireFields(input, ["equation", "skill"]);
-      if (ex) { ex.status = "abandoned"; }
+      // Practice comes after the exercise, never instead of it.
+      if (ex)
+        throw new MathError(
+          `The student has not finished "${ex.problem}" yet. Keep guiding them on it; assign a practice problem only after complete_exercise has succeeded.`
+        );
+      if (student.exercises.slice(-6).some((e) => canon(e.problem) === canon(input.equation)))
+        throw new MathError("The student has already worked on this exact equation; keep the structure but change the numbers");
       const mistakeId = str(input.targets_mistake_id) && student.mistakes.some((m) => m.id === input.targets_mistake_id) ? input.targets_mistake_id : null;
+      // createExercise validates first and throws without touching the exercise in progress.
       const created = createExercise(student, {
-        problem: input.equation,
+        problem: clip(input.equation, 120),
         skill: SKILLS.includes(input.skill) ? input.skill : "other",
         source: "tutor",
         targets_mistake_id: mistakeId,
-        rationale: input.rationale ?? null,
+        rationale: clip(input.rationale, 300) || null,
       });
-      session.activeExerciseId = created.id;
+      activate(student, session, created);
       return {
         result: { exercise_id: created.id, now_active: true, solution_for_tutor_only: created.solutions },
         summary: `${created.problem} (targets ${mistakeId ?? "—"})`,
       };
+    }
+    case "start_exercise": {
+      requireFields(input, ["equation"]);
+      if (ex && canon(ex.problem) === canon(input.equation))
+        return { result: { exercise_id: ex.id, now_active: true, note: "this is already the active exercise" }, summary: `${ex.problem} (already active)` };
+      // Only the student can switch exercises mid-way, and only by naming the new equation themselves.
+      if (ex && !writtenByStudent(input.equation, studentText))
+        throw new MathError(`"${ex.problem}" is still in progress and the student did not ask for this equation. Continue with the active exercise.`);
+      const created = createExercise(student, { problem: clip(input.equation, 120), source: "student" });
+      activate(student, session, created);
+      return { result: { exercise_id: created.id, now_active: true, solution_for_tutor_only: created.solutions }, summary: created.problem };
     }
     default:
       throw new MathError(`Unknown tool ${name}`);

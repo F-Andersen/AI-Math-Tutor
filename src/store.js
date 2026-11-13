@@ -8,19 +8,31 @@ import crypto from "node:crypto";
 const DATA_DIR = process.env.DATA_DIR || path.resolve("data");
 const FILE = path.join(DATA_DIR, "progress.json");
 
-let db = {};
-try {
-  db = JSON.parse(fs.readFileSync(FILE, "utf8"));
-} catch {
-  db = {};
+// No prototype: ids such as "__proto__" or "constructor" are ordinary keys.
+let db = Object.create(null);
+if (fs.existsSync(FILE)) {
+  try {
+    Object.assign(db, JSON.parse(fs.readFileSync(FILE, "utf8")));
+  } catch (err) {
+    // Keep the unreadable file for recovery instead of silently overwriting it.
+    const backup = `${FILE}.corrupt-${Date.now()}`;
+    try { fs.renameSync(FILE, backup); } catch { /* best effort */ }
+    console.error(`[store] ${FILE} could not be read (${err.message}); starting empty, old file kept as ${backup}`);
+  }
 }
 
 let writeTimer = null;
 function writeNow() {
   writeTimer = null;
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(FILE + ".tmp", JSON.stringify(db, null, 2));
-  fs.renameSync(FILE + ".tmp", FILE);
+  // A failed write (read-only disk, antivirus lock, disk full) must not take
+  // the server down: progress stays in memory and the next change retries.
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(FILE + ".tmp", JSON.stringify(db, null, 2));
+    fs.renameSync(FILE + ".tmp", FILE);
+  } catch (err) {
+    console.error(`[store] could not save progress to ${FILE}: ${err.message}`);
+  }
 }
 function persist() {
   clearTimeout(writeTimer);
@@ -34,10 +46,10 @@ export function flush() {
   }
 }
 
-export const newId = (prefix) => `${prefix}_${crypto.randomBytes(4).toString("hex")}`;
+export const newId = (prefix, bytes = 4) => `${prefix}_${crypto.randomBytes(bytes).toString("hex")}`;
 
 export function getStudent(id) {
-  if (!db[id]) {
+  if (!Object.hasOwn(db, id)) {
     db[id] = { id, createdAt: new Date().toISOString(), exercises: [], mistakes: [], skills: {} };
     persist();
   }
